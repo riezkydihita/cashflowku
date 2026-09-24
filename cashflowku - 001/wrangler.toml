@@ -1,0 +1,10 @@
+name = "cashflowku"
+compatibility_date = "2024-09-01"
+pages_build_output_dir = "public"
+
+# Untuk development lokal (wrangler pages dev).
+# Saat deploy via dashboard Cloudflare Pages, binding KV cukup diatur
+# lewat Settings > Functions > KV namespace bindings (lihat README.md).
+[[kv_namespaces]]
+binding = "CASHFLOW_KV"
+id = "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
