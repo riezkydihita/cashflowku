@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Cashflow Ku</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  :root{
+    --bg:#f6f7f9;--card:#ffffff;--text:#1a1d23;--sub:#6b7280;--border:#e5e7eb;
+    --accent:#2563eb;--green:#16a34a;--red:#dc2626;--amber:#d97706;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){--bg:#111317;--card:#1a1d23;--text:#f1f2f4;--sub:#9ca3af;--border:#2b2f36;}
+  }
+  :root[data-theme="dark"]{--bg:#111317;--card:#1a1d23;--text:#f1f2f4;--sub:#9ca3af;--border:#2b2f36;}
+  html,body{background:var(--bg);color:var(--text);padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:16px;}
+  input,select{background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:10px;padding:8px 10px;}
+  .tab{padding:8px 14px;border-radius:10px;color:var(--sub);cursor:pointer;font-weight:600;font-size:14px;white-space:nowrap;}
+  .tab.active{background:var(--accent);color:white;}
+  .barbg{background:var(--border);border-radius:8px;overflow:hidden;height:10px;}
+  .barfg{height:100%;border-radius:8px;}
+  ::-webkit-scrollbar{height:6px;width:6px;}
+</style>
+</head>
+<body class="min-h-screen">
+<div class="max-w-3xl mx-auto p-4 pb-10">
+  <div class="flex items-center justify-between mb-2">
+    <h1 class="text-xl font-bold">💰 Cashflow Ku</h1>
+    <span id="periodLabel" class="text-sm" style="color:var(--sub)"></span>
+  </div>
+  <div id="syncBar" class="card p-3 mb-4 text-sm flex items-center justify-between gap-2 flex-wrap"></div>
+
+  <div id="tabs" class="flex gap-2 overflow-x-auto mb-4"></div>
+  <div id="content"></div>
+</div>
+
+<script>
+const LS_KEY = 'cashflowku_data_v1';
+const SYNC_KEY = 'cashflowku_syncid_v1';
+const API_BASE = '/api/data';
+
+function getSyncId(){ return localStorage.getItem(SYNC_KEY); }
+function setSyncId(id){ localStorage.setItem(SYNC_KEY, id); }
+function genSyncId(){
+  const id = (crypto.randomUUID ? crypto.randomUUID() : (Date.now().toString(36)+Math.random().toString(36).slice(2)));
+  return id.replace(/-/g,'').slice(0,12);
+}
+
+function load(){
+  try{ return JSON.parse(localStorage.getItem(LS_KEY)) || null }catch(e){ return null }
+}
+
+let syncStatus = 'idle'; // idle | syncing | synced | error | offline
+let saveTimer = null;
+
+async function pullFromServer(){
+  const id = getSyncId();
+  if(!id) return;
+  syncStatus = 'syncing'; renderSyncBar();
+  try{
+    const res = await fetch(`${API_BASE}?id=${id}`);
+    if(res.ok){
+      const remote = await res.json();
+      if(remote && Object.keys(remote).length){
+        data = remote;
+        localStorage.setItem(LS_KEY, JSON.stringify(data));
+      }
+      syncStatus = 'synced';
+    } else { syncStatus = 'error'; }
+  }catch(e){ syncStatus = 'offline'; }
+  renderSyncBar(); renderAll();
+}
+
+function pushToServer(){
+  const id = getSyncId();
+  if(!id) return;
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(async ()=>{
+    syncStatus = 'syncing'; renderSyncBar();
+    try{
+      const res = await fetch(`${API_BASE}?id=${id}`, {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify(data)
+      });
+      syncStatus = res.ok ? 'synced' : 'error';
+    }catch(e){ syncStatus = 'offline'; }
+    renderSyncBar();
+  }, 600);
+}
+
+function renderSyncBar(){
+  const el = document.getElementById('syncBar');
+  if(!el) return;
+  const id = getSyncId();
+  const statusDot = {idle:'⚪',syncing:'🔄',synced:'🟢',error:'🔴',offline:'🟠'}[syncStatus] || '⚪';
+  const statusText = {idle:'Belum sinkron',syncing:'Menyinkronkan...',synced:'Tersinkron ke semua device',error:'Gagal sinkron',offline:'Offline, tersimpan lokal'}[syncStatus];
+  if(!id){
+    el.innerHTML = `<span>📵 Data ini hanya tersimpan di device ini.</span>
+      <button id="setupSyncBtn" class="px-3 py-1 rounded-lg text-white" style="background:var(--accent)">Aktifkan Sinkronisasi Antar Device</button>`;
+    document.getElementById('setupSyncBtn').onclick = setupSync;
+  } else {
+    el.innerHTML = `<span>${statusDot} ${statusText} · Kode: <b>${id}</b></span>
+      <span class="flex gap-2">
+        <button id="copySyncBtn" class="px-3 py-1 rounded-lg border" style="border-color:var(--border)">Salin Kode</button>
+        <button id="changeSyncBtn" class="px-3 py-1 rounded-lg border" style="border-color:var(--border)">Ganti Device Lain</button>
+      </span>`;
+    document.getElementById('copySyncBtn').onclick = ()=>{ navigator.clipboard?.writeText(id); alert('Kode sinkron disalin: '+id+'\nMasukkan kode ini di device lain untuk menyamakan data.'); };
+    document.getElementById('changeSyncBtn').onclick = setupSync;
+  }
+}
+
+function setupSync(){
+  const choice = prompt('Masukkan Kode Sinkron dari device lain (kosongkan untuk buat kode baru):');
+  if(choice===null) return;
+  const id = choice.trim() ? choice.trim() : genSyncId();
+  setSyncId(id);
+  pullFromServer();
+}
+function defaultData(){
+  return {
+    incomes: [], // {id,name,amount,recurring}
+    expenses: [], // {id,name,amount,dueDay,category,recurring}
+    dailySpends: [], // {id,name,amount,perDay}  -> kebiasaan kecil
+    savingPct: 20,
+    buyPlans: [], // {id,name,price,haveNow,months}
+    categories: [
+      {id:'tabungan', name:'Tabungan', pct:0, color:'#16a34a'},
+      {id:'liburan', name:'Liburan', pct:5, color:'#d97706'},
+      {id:'pokok', name:'Kebutuhan Pokok', pct:50, color:'#2563eb'},
+      {id:'angsuran', name:'Angsuran/Cicilan', pct:15, color:'#dc2626'},
+    ],
+    theme:'auto'
+  };
+}
+let data = load() || defaultData();
+function save(){ try{ localStorage.setItem(LS_KEY, JSON.stringify(data)); }catch(e){} pushToServer(); }
+function fmt(n){ n = Math.round(n||0); return 'Rp' + n.toLocaleString('id-ID'); }
+function uid(){ return Math.random().toString(36).slice(2,9); }
+
+function totalIncome(){ return data.incomes.reduce((s,i)=>s+Number(i.amount||0),0); }
+function totalExpense(){ return data.expenses.reduce((s,e)=>s+Number(e.amount||0),0); }
+function totalDaily(){ return data.dailySpends.reduce((s,d)=>s+Number(d.amount||0)*Number(d.perDay||30),0); }
+function savingAmount(){ return totalIncome()*(Number(data.savingPct||0)/100); }
+function sisaBebas(){ return totalIncome() - totalExpense() - savingAmount(); }
+
+let activeTab = 'dashboard';
+const tabsDef = [
+  {id:'dashboard', label:'📊 Dashboard'},
+  {id:'income', label:'⬇️ Pemasukan'},
+  {id:'expense', label:'⬆️ Pengeluaran'},
+  {id:'goal', label:'🎯 Rencana'},
+  {id:'habit', label:'☕ Kebiasaan Kecil'},
+  {id:'buy', label:'🛒 Rencana Beli'},
+];
+
+function renderTabs(){
+  const el = document.getElementById('tabs');
+  el.innerHTML = tabsDef.map(t=>`<div class="tab ${activeTab===t.id?'active':''}" data-tab="${t.id}">${t.label}</div>`).join('');
+  el.querySelectorAll('[data-tab]').forEach(n=>n.onclick=()=>{activeTab=n.dataset.tab; renderAll();});
+}
+
+function catBar(cat, amount, total){
+  const target = total*(cat.pct/100);
+  const pct = target>0 ? Math.min(100, (amount/target)*100) : 0;
+  return `<div class="mb-3">
+    <div class="flex justify-between text-sm mb-1"><span>${cat.name}</span><span style="color:var(--sub)">${fmt(target)} / bln</span></div>
+    <div class="barbg"><div class="barfg" style="width:${pct}%;background:${cat.color}"></div></div>
+  </div>`;
+}
+
+function renderDashboard(){
+  const inc = totalIncome();
+  const exp = totalExpense();
+  const saving = savingAmount();
+  const sisa = sisaBebas();
+  let html = `
+  <div class="grid grid-cols-2 gap-3 mb-4">
+    <div class="card p-4"><div class="text-sm" style="color:var(--sub)">Total Pemasukan</div><div class="text-lg font-bold" style="color:var(--green)">${fmt(inc)}</div></div>
+    <div class="card p-4"><div class="text-sm" style="color:var(--sub)">Total Pengeluaran Rutin</div><div class="text-lg font-bold" style="color:var(--red)">${fmt(exp)}</div></div>
+    <div class="card p-4"><div class="text-sm" style="color:var(--sub)">Target Tabungan (${data.savingPct}%)</div><div class="text-lg font-bold" style="color:var(--accent)">${fmt(saving)}</div></div>
+    <div class="card p-4"><div class="text-sm" style="color:var(--sub)">Sisa Uang Bebas</div><div class="text-lg font-bold" style="color:${sisa<0?'var(--red)':'var(--text)'}">${fmt(sisa)}</div></div>
+  </div>
+  <div class="card p-4 mb-4">
+    <div class="font-semibold mb-3">Alokasi Kategori (dari pemasukan)</div>
+    ${data.categories.map(c=>{
+      const spent = data.expenses.filter(e=>e.category===c.id).reduce((s,e)=>s+Number(e.amount||0),0);
+      return catBar(c, spent, inc);
+    }).join('')}
+    <button id="addCatBtn" class="text-sm mt-1" style="color:var(--accent)">+ Tambah kategori</button>
+  </div>`;
+  const dailyMonthly = totalDaily();
+  if(dailyMonthly>0){
+    html += `<div class="card p-4">
+      <div class="font-semibold mb-2">☕ Analisis Kebiasaan Kecil</div>
+      <div class="text-sm" style="color:var(--sub)">Total pengeluaran kecil harianmu bila dikumpulkan sebulan:</div>
+      <div class="text-xl font-bold mt-1" style="color:var(--amber)">${fmt(dailyMonthly)} / bulan</div>
+    </div>`;
+  }
+  document.getElementById('content').innerHTML = html;
+  const btn = document.getElementById('addCatBtn');
+  if(btn) btn.onclick = ()=>{
+    const name = prompt('Nama kategori baru:');
+    if(!name) return;
+    const pct = Number(prompt('Berapa % dari pemasukan untuk kategori ini?','10'))||0;
+    data.categories.push({id:uid(), name, pct, color:'#'+Math.floor(Math.random()*16777215).toString(16)});
+    save(); renderAll();
+  };
+}
+
+function listRow(label, sub, onDel){
+  return `<div class="flex items-center justify-between py-2 border-b" style="border-color:var(--border)">
+    <div><div class="font-medium">${label}</div><div class="text-xs" style="color:var(--sub)">${sub}</div></div>
+    <button class="text-sm" style="color:var(--red)" data-del>Hapus</button>
+  </div>`;
+}
+
+function renderIncome(){
+  let html = `<div class="card p-4 mb-4">
+    <div class="font-semibold mb-3">Tambah Pemasukan</div>
+    <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+      <input id="incName" placeholder="Nama (mis. Gaji)" class="col-span-1">
+      <input id="incAmount" type="number" placeholder="Jumlah (Rp)" class="col-span-1">
+      <select id="incRecurring" class="col-span-1"><option value="1">Rutin bulanan</option><option value="0">Sekali</option></select>
+    </div>
+    <button id="incAddBtn" class="mt-3 px-4 py-2 rounded-lg text-white text-sm" style="background:var(--accent)">Tambah</button>
+  </div>
+  <div class="card p-4">
+    <div class="font-semibold mb-2">Daftar Pemasukan</div>
+    ${data.incomes.length? data.incomes.map(i=>listRow(i.name, (i.recurring?'Rutin bulanan':'Sekali')+' · '+fmt(i.amount), i.id)).join('') : '<div class="text-sm" style="color:var(--sub)">Belum ada data.</div>'}
+  </div>`;
+  document.getElementById('content').innerHTML = html;
+  document.getElementById('incAddBtn').onclick = ()=>{
+    const name = document.getElementById('incName').value.trim();
+    const amount = Number(document.getElementById('incAmount').value);
+    const recurring = document.getElementById('incRecurring').value==='1';
+    if(!name||!amount) return alert('Isi nama dan jumlah.');
+    data.incomes.push({id:uid(), name, amount, recurring});
+    save(); renderAll();
+  };
+  document.querySelectorAll('#content [data-del]').forEach((btn,idx)=>{
+    btn.onclick = ()=>{ data.incomes.splice(idx,1); save(); renderAll(); };
+  });
+}
+
+function renderExpense(){
+  const catOpts = data.categories.map(c=>`<option value="${c.id}">${c.name}</option>`).join('');
+  let html = `<div class="card p-4 mb-4">
+    <div class="font-semibold mb-3">Tambah Pengeluaran Rutin</div>
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+      <input id="expName" placeholder="Nama (mis. Listrik)">
+      <input id="expAmount" type="number" placeholder="Jumlah (Rp)">
+      <input id="expDue" type="number" min="1" max="31" placeholder="Tanggal jatuh tempo (1-31)">
+      <select id="expCat">${catOpts}</select>
+    </div>
+    <button id="expAddBtn" class="mt-3 px-4 py-2 rounded-lg text-white text-sm" style="background:var(--accent)">Tambah</button>
+  </div>
+  <div class="card p-4">
+    <div class="font-semibold mb-2">Daftar Pengeluaran</div>
+    ${data.expenses.length? data.expenses.sort((a,b)=>(a.dueDay||99)-(b.dueDay||99)).map(e=>{
+      const cat = data.categories.find(c=>c.id===e.category);
+      return listRow(e.name, 'Jatuh tempo tgl '+(e.dueDay||'-')+' · '+(cat?cat.name:'-')+' · '+fmt(e.amount), e.id);
+    }).join('') : '<div class="text-sm" style="color:var(--sub)">Belum ada data.</div>'}
+  </div>`;
+  document.getElementById('content').innerHTML = html;
+  document.getElementById('expAddBtn').onclick = ()=>{
+    const name = document.getElementById('expName').value.trim();
+    const amount = Number(document.getElementById('expAmount').value);
+    const dueDay = Number(document.getElementById('expDue').value)||null;
+    const category = document.getElementById('expCat').value;
+    if(!name||!amount) return alert('Isi nama dan jumlah.');
+    data.expenses.push({id:uid(), name, amount, dueDay, category});
+    save(); renderAll();
+  };
+  document.querySelectorAll('#content [data-del]').forEach((btn)=>{
+    btn.onclick = (ev)=>{
+      const row = ev.target.closest('.flex');
+      const label = row.querySelector('.font-medium').textContent;
+      data.expenses = data.expenses.filter(e=>e.name!==label);
+      save(); renderAll();
+    };
+  });
+}
+
+function renderGoal(){
+  const inc = totalIncome();
+  let html = `<div class="card p-4 mb-4">
+    <div class="font-semibold mb-2">Target Tabungan Bulanan</div>
+    <div class="text-sm mb-2" style="color:var(--sub)">Persentase dari total pemasukan yang ingin disisihkan.</div>
+    <div class="flex items-center gap-3">
+      <input id="savingPct" type="range" min="0" max="100" value="${data.savingPct}" class="flex-1">
+      <span id="savingPctVal" class="font-bold w-14 text-right">${data.savingPct}%</span>
+    </div>
+    <div class="mt-2 text-sm" style="color:var(--sub)">≈ ${fmt(inc*data.savingPct/100)} per bulan (berdasarkan total pemasukanmu saat ini)</div>
+  </div>
+  <div class="card p-4">
+    <div class="font-semibold mb-3">Alokasi Kategori Lain</div>
+    <div class="text-sm mb-3" style="color:var(--sub)">Atur berapa % pemasukan untuk tiap kategori (di luar tabungan).</div>
+    ${data.categories.map(c=>`
+      <div class="flex items-center gap-3 mb-2">
+        <span class="w-40 text-sm">${c.name}</span>
+        <input type="range" min="0" max="100" value="${c.pct}" data-catpct="${c.id}" class="flex-1">
+        <span class="w-12 text-right text-sm" data-catval="${c.id}">${c.pct}%</span>
+      </div>`).join('')}
+  </div>`;
+  document.getElementById('content').innerHTML = html;
+  const rng = document.getElementById('savingPct');
+  rng.oninput = ()=>{ document.getElementById('savingPctVal').textContent = rng.value+'%'; };
+  rng.onchange = ()=>{ data.savingPct = Number(rng.value); save(); renderAll(); };
+  document.querySelectorAll('[data-catpct]').forEach(inp=>{
+    const id = inp.dataset.catpct;
+    inp.oninput = ()=>{ document.querySelector(`[data-catval="${id}"]`).textContent = inp.value+'%'; };
+    inp.onchange = ()=>{ const c=data.categories.find(x=>x.id===id); c.pct=Number(inp.value); save(); renderAll(); };
+  });
+}
+
+function renderHabit(){
+  let html = `<div class="card p-4 mb-4">
+    <div class="font-semibold mb-3">Tambah Kebiasaan Kecil</div>
+    <div class="text-sm mb-2" style="color:var(--sub)">Contoh: kopi harian, rokok, jajan, parkir.</div>
+    <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+      <input id="habName" placeholder="Nama (mis. Kopi)">
+      <input id="habAmount" type="number" placeholder="Harga sekali (Rp)">
+      <input id="habPerDay" type="number" value="30" placeholder="Berapa hari/bulan">
+    </div>
+    <button id="habAddBtn" class="mt-3 px-4 py-2 rounded-lg text-white text-sm" style="background:var(--accent)">Tambah</button>
+  </div>
+  <div class="card p-4">
+    <div class="font-semibold mb-2">Daftar Kebiasaan</div>
+    ${data.dailySpends.length? data.dailySpends.map(d=>listRow(d.name, fmt(d.amount)+' × '+d.perDay+' hari = '+fmt(d.amount*d.perDay)+'/bulan', d.id)).join('') : '<div class="text-sm" style="color:var(--sub)">Belum ada data.</div>'}
+    ${data.dailySpends.length? `<div class="mt-3 pt-3 border-t font-semibold" style="border-color:var(--border)">Total: ${fmt(totalDaily())}/bulan</div>`:''}
+  </div>`;
+  document.getElementById('content').innerHTML = html;
+  document.getElementById('habAddBtn').onclick = ()=>{
+    const name = document.getElementById('habName').value.trim();
+    const amount = Number(document.getElementById('habAmount').value);
+    const perDay = Number(document.getElementById('habPerDay').value)||30;
+    if(!name||!amount) return alert('Isi nama dan harga.');
+    data.dailySpends.push({id:uid(), name, amount, perDay});
+    save(); renderAll();
+  };
+  document.querySelectorAll('#content [data-del]').forEach((btn,idx)=>{
+    btn.onclick = ()=>{ data.dailySpends.splice(idx,1); save(); renderAll(); };
+  });
+}
+
+function analyzeBuy(p){
+  const bebas = sisaBebas();
+  const kurang = Math.max(0, p.price - Number(p.haveNow||0));
+  const canBuyNow = kurang<=0;
+  const months = Number(p.months||1);
+  const cicilan = kurang / months;
+  const feasible = cicilan <= bebas;
+  const maxAffordableCicilan = bebas>0? bebas : 0;
+  const minMonthsNeeded = maxAffordableCicilan>0 ? Math.ceil(kurang/maxAffordableCicilan) : Infinity;
+  return {bebas, kurang, canBuyNow, cicilan, feasible, minMonthsNeeded};
+}
+
+function renderBuy(){
+  let html = `<div class="card p-4 mb-4">
+    <div class="font-semibold mb-3">Analisa Rencana Beli Barang</div>
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+      <input id="buyName" placeholder="Nama barang (mis. HP baru)">
+      <input id="buyPrice" type="number" placeholder="Harga (Rp)">
+      <input id="buyHave" type="number" placeholder="Uang yang sudah kamu punya (Rp), opsional">
+      <input id="buyMonths" type="number" min="1" value="3" placeholder="Rencana cicil berapa bulan?">
+    </div>
+    <button id="buyAddBtn" class="mt-3 px-4 py-2 rounded-lg text-white text-sm" style="background:var(--accent)">Analisa & Simpan</button>
+  </div>
+  <div id="buyList"></div>`;
+  document.getElementById('content').innerHTML = html;
+
+  function renderList(){
+    const listEl = document.getElementById('buyList');
+    if(!data.buyPlans.length){ listEl.innerHTML = '<div class="text-sm" style="color:var(--sub)">Belum ada rencana pembelian.</div>'; return; }
+    listEl.innerHTML = data.buyPlans.map(p=>{
+      const a = analyzeBuy(p);
+      let verdict;
+      if(a.canBuyNow){
+        verdict = `<div class="font-semibold" style="color:var(--green)">✅ Bisa langsung dibeli sekarang</div>
+          <div class="text-sm mt-1" style="color:var(--sub)">Uang yang kamu punya (${fmt(p.haveNow||0)}) sudah cukup untuk harga ${fmt(p.price)}.</div>`;
+      } else {
+        verdict = `<div class="font-semibold" style="color:${a.feasible?'var(--amber)':'var(--red)'}">${a.feasible?'⚠️ Belum cukup, tapi bisa dicicil':'❌ Cicilan segini terlalu berat'}</div>
+          <div class="text-sm mt-1" style="color:var(--sub)">Kekurangan dana: ${fmt(a.kurang)}</div>
+          <div class="text-sm">Kalau dicicil ${p.months} bulan → <b>${fmt(a.cicilan)}/bulan</b></div>
+          <div class="text-sm" style="color:var(--sub)">Kapasitas sisa uang bebas kamu saat ini: ${fmt(a.bebas)}/bulan</div>
+          ${!a.feasible ? `<div class="text-sm mt-1">Supaya cicilan muat di sisa uang bebasmu, kamu perlu minimal <b>${isFinite(a.minMonthsNeeded)?a.minMonthsNeeded+' bulan':'menaikkan pemasukan / kurangi pengeluaran dulu'}</b> masa cicilan.</div>`:''}`;
+      }
+      return `<div class="card p-4 mb-3">
+        <div class="flex justify-between items-start mb-2">
+          <div><div class="font-medium">${p.name}</div><div class="text-xs" style="color:var(--sub)">Harga ${fmt(p.price)}</div></div>
+          <button class="text-sm" style="color:var(--red)" data-delbuy="${p.id}">Hapus</button>
+        </div>
+        ${verdict}
+      </div>`;
+    }).join('');
+    listEl.querySelectorAll('[data-delbuy]').forEach(btn=>{
+      btn.onclick=()=>{ data.buyPlans = data.buyPlans.filter(p=>p.id!==btn.dataset.delbuy); save(); renderList(); };
+    });
+  }
+  renderList();
+
+  document.getElementById('buyAddBtn').onclick = ()=>{
+    const name = document.getElementById('buyName').value.trim();
+    const price = Number(document.getElementById('buyPrice').value);
+    const haveNow = Number(document.getElementById('buyHave').value)||0;
+    const months = Number(document.getElementById('buyMonths').value)||1;
+    if(!name||!price) return alert('Isi nama dan harga barang.');
+    data.buyPlans.push({id:uid(), name, price, haveNow, months});
+    save(); renderList();
+    document.getElementById('buyName').value=''; document.getElementById('buyPrice').value='';
+    document.getElementById('buyHave').value=''; document.getElementById('buyMonths').value=3;
+  };
+}
+
+function renderAll(){
+  renderTabs();
+  document.getElementById('periodLabel').textContent = new Date().toLocaleDateString('id-ID',{month:'long',year:'numeric'});
+  if(activeTab==='dashboard') renderDashboard();
+  else if(activeTab==='income') renderIncome();
+  else if(activeTab==='expense') renderExpense();
+  else if(activeTab==='goal') renderGoal();
+  else if(activeTab==='habit') renderHabit();
+  else if(activeTab==='buy') renderBuy();
+}
+renderSyncBar();
+renderAll();
+if(getSyncId()) pullFromServer();
+</script>
+</body>
+</html>
